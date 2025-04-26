@@ -1,0 +1,494 @@
+---
+title: "Déterminants de la mortalité infanto-Juvénile au Cameroun"
+author: |
+  Dimitry Yonta  
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    self_contained: true
+    theme: flatly              
+    highlight: tango           
+    toc: true                  
+    toc_depth: 3               
+    toc_float:                 
+      collapsed: true          
+      smooth_scroll: true      
+    code_folding: hide         
+    number_sections: true      
+    df_print: paged            
+    css: "custom.css"          
+params:                         
+  dataset: "data.csv"
+---
+
+```{css, echo=FALSE}
+p {
+  text-align: justify;
+  font-size: 20px;
+}
+pre {
+  font-size: 20px; 
+}
+
+code {
+  font-size: 20px; 
+}
+---
+
+knitr::opts_chunk$set(fig.width=10, fig.height=6)
+```
+
+## Contexte 
+
+Selon les données de la dernière Enquête Démographique et de Santé du Cameroun (EDS 2018), 80 enfants sur 1000 naissances vivantes sont décédés avant leur cinquième anniversaire au cours des cinq années précédant la collecte des données.
+
+La mortalité infanto-juvénile constitue un problème majeur de santé publique, avec des impacts significatifs sur le développement social et économique du pays.
+
+Plusieurs études menées dans certaines régions du Cameroun se sont concentrées principalement sur les facteurs cliniques associés à la mortalité néonatale, mais les facteurs sociodémographiques, pourtant cruciaux, n'ont pas été suffisamment explorés. En outre, les méthodes utilisées dans ces travaux n'intègrent pas la possibilité qu'un enfant puisse décéder après la période d'observation, ce qui peut entraîner des biais d'analyse. Les modèles d'analyse de survie, notamment le modèle à risques proportionnels de Cox, permettent de mieux prendre en compte cette spécificité.
+
+Ainsi, dans ce projet, j’ai exploré les facteurs sociodémographiques associés à la mortalité infanto-juvénile au Cameroun en utilisant le modèle de Cox et les données de l'enquête démographique et de santé.
+
+Les facteurs etudiees incluent:
+
+-   L’âge de la mère à la première naissance,
+
+-   Le niveau d’éducation de la mère,
+
+-   Le sexe de l’enfant,
+
+-   Le poids de l'enfants a la naissance,
+
+-   La religion,
+
+-   L'indice de richesse,
+
+-   Le nombre d’enfants dans le ménage,
+
+-   Le rang de naissance,
+
+-   L’intervalle avec la naissance précédente,
+
+-   Le fait d’être jumeau,
+
+-   Le Lieu de residence
+
+## Importation des données, selection et creaction des variables
+
+```{r}
+## Importation des packages 
+pacman::p_load(haven, tidyverse, gtsummary, survey, labelled,survival, survminer)
+
+## Importation des bases de données 
+menage <- read_dta("C:/Users/DELL/OneDrive/Desktop/Mes Projets_R/epidemioR/DHS STATA/CMHR71DT/CMHR71FL.DTA")
+
+femmes <- read_dta("C:/Users/DELL/OneDrive/Desktop/Mes Projets_R/epidemioR/DHS STATA/CMIR71DT/CMIR71FL.DTA")
+
+enfant <- read_dta("C:/Users/DELL/OneDrive/Desktop/Mes Projets_R/epidemioR/DHS STATA/CMKR71DT/CMKR71FL.DTA")
+
+## Prise en compte des étiquettes
+
+femmes <- femmes %>% 
+  unlabelled()
+
+enfant <- enfant %>% 
+  unlabelled()
+
+menage <- menage %>% 
+  unlabelled()
+
+```
+
+```{r}
+# Selection des variables et recodage
+
+## Creation de la variable date_interview
+
+femmes <- femmes%>% 
+  mutate( date_interview = dmy(str_c(v016, v006, v007, sep = "/")))
+
+## joindre chaque femme à son enfants dans la base enfants
+
+enfant <- enfant %>% 
+  left_join( femmes %>% 
+               select(caseid,date_interview), by = "caseid")
+
+## calculons le temps entre la naissance de l'enfant et l'interview en mois
+
+enfant <-  enfant %>% 
+  mutate(date_naissance_enfant =dmy(str_c(b17, b1, b2, sep = "/")),
+         intervalle_observation = interval( date_naissance_enfant,date_interview) %>%
+           time_length(unit = "month"))
+
+
+
+```
+
+```{r}
+## Selection des variables
+
+base <- enfant %>% 
+  select(caseid,v012, v024, v025,v190, v106,v130,m18, m19,intervalle_observation,b4,b5,b7,b8,b11,b12,b0,bidx,bord)
+
+
+## Description des variables
+questionr::look_for(base)
+```
+
+
+```{r}
+## calculons l'age de la mere a la naissance
+
+base <- base %>% 
+  
+  ## Si l'enfant est décédé alors l'âge de la mère à la naissance de l'enfant c'est la difference entre 
+  ## l'âge actuel de la mère et l'âge de l'enfant au décès
+  mutate( age_mere_naissance = ifelse(b5=="yes", v012-b8, (v012*12 -b7)/12),
+            age_mere_naissance = case_when(
+            age_mere_naissance < 20 ~ "< 20",
+            age_mere_naissance >=20 & age_mere_naissance < 30 ~ "20-29",
+            age_mere_naissance >=29 & age_mere_naissance < 40 ~ "30-39",
+            age_mere_naissance >=40 & age_mere_naissance < 50 ~ "40-49"
+          ))
+
+## Rang de l'enfant dans la flatrie
+
+base <- base %>% 
+  mutate(rang_naissance = case_when(
+    bord == 1 ~ "1",
+    bord == 2|bord ==3 ~ "2-3",
+    bord > 3 & bord<=6 ~ "4-6",
+    bord > 6 ~ "+7"
+  ))
+
+## Poids a la naissance
+base <- base %>%
+  mutate( poids_naissance = case_when(
+    m19 < 2500 ~ "inferieur à 2,5 kg",
+    m19 >=2500 & m19 <= 3500 ~ "2,5-3,5 kg",
+    m19 >3500 & m19 <= 6000 ~ "superieur à 3,5 kg",
+    m19 > 6000 ~ "Je ne sais pas/ pas été pésé"
+  ))
+
+## Intervalle avec la naissance precedente
+
+base <- base %>% 
+  mutate(intervalle_naissance_prec = case_when(
+    b11 < 24 ~ "inferieur à 2 ans",
+    b11 == 24 ~ " 2 ans",
+    b11 > 24 ~ "plus de 2 ans",
+     is.na(b11) ~ "Non Applicable (premier enfant)"
+  ))
+
+
+
+## Creaction des variables de survie 
+
+base <- base %>% 
+  mutate( deces = ifelse( b5 == "yes", 0, 1),
+          temps = ifelse( b5 == "yes", intervalle_observation, b7))
+
+
+## Recodage des region
+base$v024<- base$v024 %>%
+  fct_recode(
+    "Adamawa" = "adamawa",
+    "Centre" = "centre (without yaounde)",
+    "Littoral" = "douala",
+    "Est" = "east",
+    "Extreme Nord" = "far-north",
+    "Littoral" = "littoral (without douala)",
+    "Nord" = "north",
+    "Nord Ouest" = "north-west",
+    "ouest" = "west",
+    "Sud" = "south",
+    "Sud ouest" = "south-west",
+    "Centre" = "yaounde"
+  )
+
+## Recodage du lieu de residence
+base$v025 <- base$v025 %>%
+  fct_recode(
+    "Urbain" = "urban",
+    "Rural" = "rural"
+  )
+
+## Recodage de lùindex de pauvrete
+base$v190 <- base$v190 %>%
+  fct_recode(
+    "Pauvre" = "poorest",
+    "Pauvre" = "poorer",
+    "Moyen" = "middle",
+    "Riche" = "richer",
+    "Riche" = "richest"
+  )
+## Recodage du niveau d'education
+base$v106 <- base$v106 %>%
+  fct_recode(
+    "Pas d'education" = "no education",
+    "Primaire" = "primary",
+    "Secondaire" = "secondary",
+    "Superieur" = "higher"
+  )
+
+## Recodage de la religion
+base$v130 <- base$v130 %>%
+  fct_recode(
+    "Chretien" = "catholic",
+    "Chretien" = "protestant",
+    "Chretien" = "other christians",
+    "Musulman" = "muslim",
+    "Animiste" = "animist",
+    "Aucune" = "none",
+    "Aucune" = "other"
+  )
+
+## Recodage du sexe
+base$b4<- base$b4 %>%
+  fct_recode(
+    "Masculin" = "male",
+    "Feminin" = "female"
+  )
+
+## Recodage du statut vital de l'enfant
+  base$b5 <- base$b5 %>% 
+    fct_recode(
+    "Non" = "no",
+    "Oui" = "yes"
+  )
+
+## Recodage de base$b0 en base$b0
+base$b0 <- base$b0 %>%
+  fct_recode(
+    "Naissance unique" = "single birth",
+    "1er d'une naissance multiple" = "1st of multiple",
+    "2 eme d'une naissance multiple" = "2nd of multiple",
+    "2 eme d'une naissance multiple" = "3rd of multiple",
+    "4e d'une naissance multiple" = "4th of multiple",
+    "5e d'une naissance multiple" = "5th of multiple"
+  ) %>% 
+  fct_drop() ## Suppression des niveaux inutiles
+```
+
+```{r}
+# Definition des modalites de reference 
+
+## Réordonnancement de base$v024
+base$v024 <- base$v024 %>%
+  fct_relevel(
+    "Centre", "Adamawa", "Littoral", "Est", "Extreme Nord", "Nord",
+    "Nord Ouest", "ouest", "Sud", "Sud ouest"
+  )
+## Réordonnancement de base$v025
+base$v025 <- base$v025 %>%
+  fct_relevel(
+    "Rural", "Urbain"
+  )
+
+## Réordonnancement de base$v190
+base$v190 <- base$v190 %>%
+  fct_relevel(
+    "Riche", "Pauvre", "Moyen")
+
+## Réordonnancement de base$v130
+base$v130 <- base$v130 %>%
+  fct_relevel(
+    "Chretien", "Musulman", "Animiste", "Aucune"
+  )
+## Réordonnancement de base$b4
+base$b4 <- base$b4 %>%
+  fct_relevel(
+    "Feminin", "Masculin"
+  )
+
+## Réordonnancement de base$age_mere_naissance
+base$age_mere_naissance <- base$age_mere_naissance %>%
+  fct_relevel(
+     "< 20","20-29", "30-39", "40-49"
+  )
+## Réordonnancement de base$rang_naissance
+base$rang_naissance <- base$rang_naissance %>%
+  fct_relevel(
+    "1", "2-3", "4-6", "+7"
+  )
+## Réordonnancement de base$poids_naissance
+base$poids_naissance <- base$poids_naissance %>%
+  fct_relevel(
+    "inferieur à 2,5 kg","2,5-3,5 kg", "superieur à 3,5 kg", "Je ne sais pas/ pas été pésé"
+  )
+## Réordonnancement de base$intervalle_naissance_prec
+base$intervalle_naissance_prec <- base$intervalle_naissance_prec %>%
+  fct_relevel(
+    " 2 ans", "inferieur a 2 ans", "Premier enfant", "plus de 2 ans"
+  )
+
+```
+
+```{r}
+# Definition des etiquettes des variables
+
+base <- base %>% 
+  set_variable_labels( b0 = "L'enfant est jumeau?", b4 = "Sexe", v024 = "Region",
+                       v025 = "Lieu de residence", v190 = "Index de richesse",v106 = "Niveau d'education de la mère", v130 = "Religion", intervalle_observation = "Intervalle d'observation de chaque enfant", deces = "l'enfant est décédé",age_mere_naissance = "age de la mere à la naissance de l'enfant", rang_naissance = "Rang de l'enfant dans la flatrie", poids_naissance = "Poids de l'enfant à la naissance", temps = "temps de suivie",intervalle_naissance_prec = "Intervalle de temps par rapport à la naissance précedente")
+
+look_for(base)
+```
+
+## Debut des analyses
+
+```{r}
+## Visualisation global de la base
+
+summary(base)
+
+```
+
+```{r}
+## Frequence de décès
+
+library(questionr)
+
+freq(base$deces)
+```
+
+```{r}
+##Description des variables
+
+base %>% 
+  tbl_summary( include =  c(v024,v025,v190,v106,v130, b4,b5,b0,age_mere_naissance,rang_naissance,poids_naissance,intervalle_naissance_prec)) %>% 
+  italicize_labels() %>% 
+  bold_labels()
+```
+
+## courbe de Survie globale
+
+```{r}
+courbe <- survfit( Surv(temps,deces)~ 1, data = base)
+
+courbe
+
+```
+
+```{r}
+## courbe de kaplan meier
+
+ggsurvplot(courbe,
+    conf.int = FALSE, # ne pas montrer l'intervalle de confiance des estimations KM
+    surv.scale = "percent", # présente les probabilités sur l'axe des ordonnées en %.
+    break.time.by = 10, # présente l'axe du temps avec un incrément de 10 mois
+    xlab = "Mois de suivi",
+    ylab = "Probabilité de survie",risk.table = T,
+     ggtheme = theme_light() )
+
+
+```
+
+## Comparaison des courbes de selon les caracteristiques
+
+```{r}
+## Courbe de la probabilité cumulée de décédé par sexe
+courbe_sexe <- survfit( Surv(temps,deces)~b4, data = base)
+
+ggsurvplot(courbe_sexe, fun = "event", risk.table = TRUE,surv.scale = "percent", break.time.by = 10, pval = TRUE,
+           conf.int = FALSE,
+           font.legend = 10,
+           legend.title = "Sexe",
+    palette = "Dark2", # spécifier la palette de couleurs 
+    ggtheme = theme_light() # simplifie le fond du graphique
+)
+```
+
+```{r}
+
+## Courbe de la probabilité cumulée de décédé par milieu de residence
+
+courbe_residence <- survfit( Surv(temps,deces)~v025, data = base)
+
+ggsurvplot(courbe_residence, fun = "event", risk.table = TRUE,surv.scale = "percent", break.time.by = 10, pval = TRUE,
+           conf.int = FALSE,
+           font.legend = 10,
+           legend.title = "Milieu de residence",
+    palette = "Dark2", # spécifier la palette de couleurs 
+    ggtheme = theme_light() # simplifie le fond du graphique
+)
+```
+
+```{r}
+## Courbe de la probabilité cumulée de décédé par indice de richesse
+
+courbe_richesse <- survfit( Surv(temps,deces)~v190, data = base)
+
+ggsurvplot(courbe_richesse, fun = "event", risk.table = TRUE,surv.scale = "percent", break.time.by = 10, pval = TRUE,
+           conf.int = FALSE,
+           font.legend = 10,
+           legend.title = "Index de richesse",
+    palette = "Dark2", # spécifier la palette de couleurs 
+    ggtheme = theme_light()) # simplifie le fond du graphique
+```
+
+## Formulation du modele de COX
+
+```{r}
+modele <- coxph(
+  Surv(temps,deces) ~  b4 + v024 + v025 + v106 + v130 + b0 + age_mere_naissance +  rang_naissance + poids_naissance + intervalle_naissance_prec,
+  data = base)
+```
+
+```{r}
+## Visualisation des resultats
+
+summary(modele)
+```
+
+## Selection du modele parcimonieux
+
+```{r}
+ modele1 <- step(modele)
+```
+
+```{r}
+##resultat du modele finale
+
+library(GGally)
+
+ggcoef_model(modele1, exponentiate = TRUE)
+
+```
+
+## Vérification de l'hypothèse de proportionalité des risques
+
+```{r}
+ggcoxzph(cox.zph(modele1))
+```
+
+```{r}
+## Resultats du modele final
+
+m1 <- tbl_regression( modele, exponentiate = T)
+m2 <- tbl_regression( modele1, exponentiate = T)
+
+tbl_merge( tbls = list(m1, m2) , tab_spanner =  c("**Modele complet**", "**Modele parcimonieux**")) %>% 
+  italicize_labels() %>% 
+  bold_labels()
+```
+
+
+## Interprétation des résultats
+
+-  Les enfants de sexe masculin ont un risque de décès 21% plus élevé que les enfants de sexe féminin (HR = 1,21 ; IC95% : 1,03 – 1,41 ; p = 0,017).
+
+-  Par rapport à la region du Centre,les enfants du Littoral ont 33% moins de risque de décéder avant 5 ans par rapport à ceux du Centre (HR = 0,67 ; IC95% : 0,47 – 0,96 ; p = 0,027) tandis que ceux de l’Extrême-Nord ont 28% moins de risque de décéder (HR = 0,72	 ; IC95% : 0,53 - 0,98	 ; p = 0,037). Les enfants vivant dans la région de l'Est ont un risque de mortalité infanto-juvénile 34% plus élevé comparé à ceux vivant dans la région du Centre (HR = 1,34 ; IC95% : 1,02 – 1,72 ; p = 0,033). Les autres régions ne montrent pas de différence significative.
+
+-  Concernant la religion, par rapport aux enfants de mères chrétiennes, ceux de mères animistes présentent une réduction significative de 64% du risque de mortalité infanto-juvénile (HR = 0,36 ; IC95% : 0,13–0,99 ; p = 0,048). Par ailleurs, les enfants dont les mères n'ont déclaré aucune religion semblent également avoir un risque réduit de 53% comparé aux chrétiens (HR = 0,47 ; IC95% : 0,22–1,01 ; p = 0,052), bien que cette association soit à la limite de la signification statistique. En revanche, appartenir à la religion musulmane n'était pas associé de manière significative à la mortalité infanto-juvénile (HR = 1,11 ; IC95% : 0,91–1,35 ; p = 0,3).
+
+-  Concernant le statut de jumeau, par rapport aux enfants issus d'une naissance unique, les premiers jumeaux ont un risque de mortalité infanto-juvénile 2,6 fois plus élevé (HR = 2,60 ; IC95% : 1,79–3,76 ; p < 0,001). Ce risque est encore plus élevé pour les deuxièmes jumeaux, avec une multiplication du risque par 4,08 (HR = 4,08 ; IC95% : 3,00–5,56 ; p < 0,001)
+
+-  Comparé aux mères de moins de 20 ans, les enfants nés de mères âgées de 20 à 29 ans présentent un risque de décès augmenté de 34 % (HR = 1,34 ; IC95% : 1,03–1,73 ; p = 0,027). Ce risque est encore plus marqué chez les enfants de mères âgées de 30 à 39 ans, avec une augmentation de 75 % (HR = 1,75 ; IC95% : 1,30–2,34 ; p < 0,001). Enfin, les enfants de mères âgées de 40 à 49 ans présentent un risque presque 5 fois plus élevé (HR = 4,79 ; IC95% : 3,33–6,89 ; p < 0,001) que ceux dont la mère avait moins de 20 ans.
+
+-  En prenant comme référence les enfants ayant un poids de naissance entre 2,5 et 3,5 kg, ceux dont le poids était inférieur à 2,5 kg ont un risque de décès 77 % plus élevé (HR = 1,77 ; IC95% : 1,28–2,44 ; p < 0,001). Les enfants pour lesquels le poids à la naissance est inconnu ou n'a pas été mesuré présentent également un risque accru de 109 % (HR = 2,09 ; IC95% : 1,69–2,57 ; p < 0,001). En revanche, pour les enfants pesant plus de 3,5 kg, aucune association significative n'a été retrouvée (HR = 0,86 ; IC95% : 0,67–1,11 ; p = 0,3).
+
+Enfin, pour l'intervalle de temps par rapport à la naissance précédente, aucune différence significative n'est observée entre les différents groupes, bien que les enfants nés après moins de 2 ans montrent une légère tendance à un risque accru.
+
+
+## Limitation
+
+La principale limite de ce projet vient du fait que l'hypothèse de proportionnalité des risques n'a pas été verifée.
