@@ -18,7 +18,7 @@ Bien que plusieurs études locales aient exploré des facteurs cliniques de la m
 - Ajustement d'un modèle multivarié de Cox avec sélection de facteurs sociodémographiques pertinents.
 - Présentation des résultats par hazard ratios (HR) et intervalles de confiance à 95 % (IC 95 %).
 
-## Résultats principaux 📝
+## Résultats principaux
 - Les enfants masculins avaient un risque de décès 21 % plus élevé que les féminins (HR=1.21, p=0.017).
 - Résider dans la région de l'Est augmentait le risque de 34 % (HR=1.34, p=0.033).
 - Être issu d'une naissance multiple (jumeaux) multipliait le risque par 2,6 à 4 selon l'ordre de naissance (HR=2.60 et HR=4.08, p<0.001).
@@ -32,6 +32,6 @@ Bien que plusieurs études locales aient exploré des facteurs cliniques de la m
 - Les données utilisées sont soumises à des droits d'accès spécifiques (DHS Program).
 - Les résultats doivent être interprétés dans le contexte camerounais de 2018 et ne peuvent pas être directement extrapolés à d'autres contextes ou périodes sans précaution.
 
-## Auteur 🙋‍♂️
+## Auteur
 - **YONTA Dimitry Emerson**  
-  Master en Épidémiologie et Santé Publique | Passionné de biostatistique et de data science en santé.
+- [Dyonta68@gmail.com]
